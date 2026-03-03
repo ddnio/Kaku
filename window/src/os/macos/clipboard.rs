@@ -210,7 +210,10 @@ impl Clipboard {
 
         if let Some((image_data, extension)) = self.read_image_data()? {
             let path = self.write_image_to_runtime_dir(&image_data, extension)?;
-            return Ok(ClipboardData::Files(vec![path]));
+            return Ok(ClipboardData::Image {
+                path,
+                extension: extension.to_string(),
+            });
         }
 
         anyhow::bail!("pasteboard read returned empty");
@@ -238,6 +241,19 @@ impl Clipboard {
                     .collect::<Vec<_>>()
                     .join(" ");
                 Ok(quoted)
+            }
+            ClipboardData::Image { path, .. } => {
+                let path_str = path.to_string_lossy().to_string();
+                match shlex::try_quote(&path_str) {
+                    Ok(quoted) => Ok(quoted.into_owned()),
+                    Err(err) => {
+                        log::warn!(
+                            "Failed to quote image path {:?} for clipboard read: {}. Using as-is.",
+                            path_str, err
+                        );
+                        Ok(path_str)
+                    }
+                }
             }
         }
     }

@@ -160,12 +160,7 @@ impl TermWindow {
             match future.await {
                 Ok(data) => {
                     window.notify(TermWindowNotif::Apply(Box::new(move |myself| {
-                        let clip = match data_to_paste_string(data, quote_dropped_files) {
-                            Some(clip) => clip,
-                            None => return,
-                        };
-
-                        if let Some(pane) = myself
+                        let pane = match myself
                             .pane_state(pane_id)
                             .overlay
                             .as_ref()
@@ -175,11 +170,45 @@ impl TermWindow {
                                 mux.get_pane(pane_id)
                             })
                         {
-                            if let Err(err) = pane.send_paste(&clip) {
+                            Some(p) => p,
+                            None => return,
+                        };
+
+                        // For clipboard images, inject an iTerm2 inline image sequence
+                        // so the image is visible in the terminal, then paste the file path.
+                        if let ClipboardData::Image { ref path, .. } = data {
+                            if let Ok(image_bytes) = std::fs::read(path) {
+                                use base64::Engine as _;
+                                let b64 = base64::engine::general_purpose::STANDARD
+                                    .encode(&image_bytes);
+                                let iterm_seq = format!(
+                                    "\x1b]1337;File=inline=1;preserveAspectRatio=1:{}\x07\r\n",
+                                    b64
+                                );
+                                let mut parser =
+                                    termwiz::escape::parser::Parser::new();
+                                let mut actions = vec![];
+                                parser.parse(iterm_seq.as_bytes(), |action| {
+                                    actions.push(action)
+                                });
+                                pane.perform_actions(actions);
+                            } else {
                                 log::warn!(
-                                    "failed to paste clipboard content into pane {pane_id}: {err:#}"
+                                    "failed to read clipboard image file for inline display: {}",
+                                    path.display()
                                 );
                             }
+                        }
+
+                        let clip = match data_to_paste_string(data, quote_dropped_files) {
+                            Some(clip) => clip,
+                            None => return,
+                        };
+
+                        if let Err(err) = pane.send_paste(&clip) {
+                            log::warn!(
+                                "failed to paste clipboard content into pane {pane_id}: {err:#}"
+                            );
                         }
                     })));
                 }
@@ -204,6 +233,10 @@ fn data_to_paste_string(
                 return None;
             }
             Some(format_dropped_paths(paths, quote_dropped_files))
+        }
+        ClipboardData::Image { path, .. } => {
+            // Paste the saved image path so it can be referenced in shell commands.
+            Some(format_dropped_paths(vec![path], quote_dropped_files))
         }
     }
 }

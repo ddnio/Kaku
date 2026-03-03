@@ -52,6 +52,9 @@ pub enum Clipboard {
 pub enum ClipboardData {
     Text(String),
     Files(Vec<PathBuf>),
+    /// Image data saved from clipboard to a temp file.
+    /// `path` is the saved file path (for shell use), `extension` is "png" or "tiff".
+    Image { path: PathBuf, extension: String },
 }
 
 impl Default for Clipboard {
