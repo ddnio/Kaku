@@ -174,30 +174,31 @@ impl TermWindow {
                             None => return,
                         };
 
-                        // For clipboard images, inject an iTerm2 inline image sequence
-                        // so the image is visible in the terminal.
-                        // Do NOT send the file path to stdin: other applications running
-                        // in the terminal (e.g. Claude Code) rely on the terminal doing
-                        // nothing with stdin for image-only clipboard contents so they
-                        // can handle clipboard access through their own mechanisms.
+                        // For clipboard images, forward the iTerm2 inline image sequence
+                        // to the application's stdin so that apps like Claude Code can
+                        // receive the image and display their own "[Image #1]" indicator,
+                        // matching the behaviour of other terminals (e.g. iTerm2).
+                        // Write directly to the PTY writer to avoid bracketed-paste wrapping.
                         if let ClipboardData::Image { ref path, .. } = data {
                             if let Ok(image_bytes) = std::fs::read(path) {
                                 use base64::Engine as _;
+                                use std::io::Write as _;
                                 let b64 = base64::engine::general_purpose::STANDARD
                                     .encode(&image_bytes);
                                 let iterm_seq = format!(
-                                    "\x1b]1337;File=inline=1;preserveAspectRatio=1:{}\x07\r\n",
+                                    "\x1b]1337;File=inline=1;preserveAspectRatio=1:{}\x07",
                                     b64
                                 );
-                                let mut parser = termwiz::escape::parser::Parser::new();
-                                let mut actions = vec![];
-                                parser.parse(iterm_seq.as_bytes(), |action| {
-                                    actions.push(action)
-                                });
-                                pane.perform_actions(actions);
+                                if let Err(err) =
+                                    pane.writer().write_all(iterm_seq.as_bytes())
+                                {
+                                    log::warn!(
+                                        "failed to write clipboard image to pane {pane_id}: {err:#}"
+                                    );
+                                }
                             } else {
                                 log::warn!(
-                                    "failed to read clipboard image file for inline display: {}",
+                                    "failed to read clipboard image file for paste: {}",
                                     path.display()
                                 );
                             }
