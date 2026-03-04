@@ -175,7 +175,11 @@ impl TermWindow {
                         };
 
                         // For clipboard images, inject an iTerm2 inline image sequence
-                        // so the image is visible in the terminal, then paste the file path.
+                        // so the image is visible in the terminal.
+                        // Do NOT send the file path to stdin: other applications running
+                        // in the terminal (e.g. Claude Code) rely on the terminal doing
+                        // nothing with stdin for image-only clipboard contents so they
+                        // can handle clipboard access through their own mechanisms.
                         if let ClipboardData::Image { ref path, .. } = data {
                             if let Ok(image_bytes) = std::fs::read(path) {
                                 use base64::Engine as _;
@@ -185,8 +189,7 @@ impl TermWindow {
                                     "\x1b]1337;File=inline=1;preserveAspectRatio=1:{}\x07\r\n",
                                     b64
                                 );
-                                let mut parser =
-                                    termwiz::escape::parser::Parser::new();
+                                let mut parser = termwiz::escape::parser::Parser::new();
                                 let mut actions = vec![];
                                 parser.parse(iterm_seq.as_bytes(), |action| {
                                     actions.push(action)
@@ -198,6 +201,7 @@ impl TermWindow {
                                     path.display()
                                 );
                             }
+                            return;
                         }
 
                         let clip = match data_to_paste_string(data, quote_dropped_files) {
